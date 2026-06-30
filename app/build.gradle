@@ -1,0 +1,59 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.etext.editor'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.etext.editor"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    signingConfigs {
+        release {
+            def ksFile = rootProject.file('etext-release.keystore')
+            if (ksFile.exists()) {
+                storeFile ksFile
+                storePassword (project.findProperty('ETEXT_STORE_PASSWORD') ?: 'etext12345')
+                keyAlias (project.findProperty('ETEXT_KEY_ALIAS') ?: 'etext')
+                keyPassword (project.findProperty('ETEXT_KEY_PASSWORD') ?: 'etext12345')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (rootProject.file('etext-release.keystore').exists()) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+    buildFeatures {
+        viewBinding true
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'com.google.android.material:material:1.12.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.activity:activity-ktx:1.9.2'
+    implementation 'androidx.documentfile:documentfile:1.0.1'
+}
