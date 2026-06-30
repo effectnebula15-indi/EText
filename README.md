@@ -10,12 +10,17 @@ built for `.txt`, `.md` and `.conf` files with a JetBrains-inspired UI.
 ## Features
 
 - **Plain-text editing** for `.txt`, `.md`, `.conf` (and any `text/*` file).
+- **Tabbed multi-file editing**, Windows 11 Notepad-style — open several files
+  at once (multi-select in the picker), switch between them via the tab strip,
+  add tabs with **+**, close with **×**. Unsaved tabs show a ● dot and prompt
+  before closing.
 - **Line-number gutter** with a current-line highlight, drawn in sync with
   the text while scrolling — JetBrains-editor style.
 - **Monospaced** editing surface with a caret tinted to the active theme.
 - **Open / Save / Save As** via the Storage Access Framework (no broad storage
   permissions required) — also opens files sent from other apps (`VIEW`/`EDIT`).
-- **Word-wrap toggle** and a live status bar (`Ln`, `Col`, line/char counts).
+- **Word-wrap toggle** and a live status bar (tab index, `Ln`, `Col`, line/char
+  counts).
 - **Seven high-contrast themes**, remembered between launches.
 
 ## Themes
@@ -41,7 +46,7 @@ Switch via **⋮ → Theme**.
 
 ## Install
 
-Grab `EText-1.0.apk` from the repository root and sideload it
+Grab `EText-1.0.0-beta1.apk` from the repository root and sideload it
 (Settings → *Install unknown apps*). Minimum Android 7.0 (API 24).
 
 ## Build from source
@@ -73,7 +78,8 @@ Override credentials with `-PETEXT_STORE_PASSWORD=…`, `-PETEXT_KEY_ALIAS=…`,
 ```
 app/src/main/
   java/com/etext/editor/
-    MainActivity.kt     # UI, file I/O (SAF), theming, status bar
+    MainActivity.kt     # UI, tabs, file I/O (SAF), theming, status bar
+    Document.kt         # per-tab open-file model
     CodeEditText.kt     # monospaced editor + line-number gutter view
     EditorTheme.kt      # the seven color schemes
   res/                  # layouts, menu, vector icons, generated launcher icons

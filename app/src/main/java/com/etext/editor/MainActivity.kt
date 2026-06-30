@@ -1,19 +1,20 @@
 package com.etext.editor
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.PorterDuff
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.LayerDrawable
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.text.Editable
 import android.text.TextWatcher
+import android.view.LayoutInflater
 import android.view.Menu
 import android.view.MenuItem
-import android.view.WindowManager
+import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -29,23 +30,24 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var prefs: android.content.SharedPreferences
 
-    private var currentUri: Uri? = null
-    private var currentName: String = "untitled.txt"
-    private var dirty: Boolean = false
-    private var loading: Boolean = false
+    /** Open documents, one per tab. Always at least one. */
+    private val documents = mutableListOf<Document>()
+    private var currentIndex = -1
+    private var untitledCounter = 0
 
+    private var loading = false
     private var theme: EditorTheme = Themes.default
     private var wordWrap: Boolean = true
 
     // --- Storage Access Framework launchers ---
 
     private val openLauncher = registerForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri -> uri?.let { loadFile(it) } }
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris -> if (!uris.isNullOrEmpty()) openFiles(uris) }
 
     private val createLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain")
-    ) { uri -> uri?.let { saveTo(it, takePersist = true) } }
+    ) { uri -> uri?.let { saveCurrentTo(it, takePersist = true) } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,17 +66,19 @@ class MainActivity : AppCompatActivity() {
             override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
             override fun onTextChanged(s: CharSequence?, st: Int, b: Int, a: Int) {}
             override fun afterTextChanged(s: Editable?) {
-                if (!loading) {
-                    dirty = true
-                    updateTitle()
-                }
+                if (!loading) markCurrentDirty()
                 updateStatus()
             }
         })
         binding.editor.setOnClickListener { updateStatus() }
 
+        binding.btnNewTab.setOnClickListener { newDocument() }
+
         applyTheme(theme)
+
         handleIncomingIntent(intent)
+        if (documents.isEmpty()) newDocument()
+
         updateTitle()
         updateStatus()
     }
@@ -84,11 +88,14 @@ class MainActivity : AppCompatActivity() {
         handleIncomingIntent(intent)
     }
 
-    private fun handleIncomingIntent(intent: Intent?) {
-        val action = intent?.action ?: return
+    private fun handleIncomingIntent(intent: Intent?): Boolean {
+        val action = intent?.action ?: return false
         if (action == Intent.ACTION_VIEW || action == Intent.ACTION_EDIT) {
-            intent.data?.let { loadFile(it) }
+            val uri = intent.data ?: return false
+            openFiles(listOf(uri))
+            return true
         }
+        return false
     }
 
     // --- Menu ---
@@ -114,10 +121,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
-            R.id.action_new -> { confirmDiscard { newDocument() }; true }
-            R.id.action_open -> { confirmDiscard { openLauncher.launch(arrayOf("text/*", "*/*")) }; true }
+            R.id.action_new -> { newDocument(); true }
+            R.id.action_open -> { openLauncher.launch(arrayOf("text/*", "*/*")); true }
             R.id.action_save -> { save(); true }
-            R.id.action_save_as -> { createLauncher.launch(currentName); true }
+            R.id.action_save_as -> { createLauncher.launch(current().name); true }
             R.id.action_theme -> { showThemePicker(); true }
             R.id.action_wrap -> { toggleWrap(); true }
             R.id.action_about -> { showAbout(); true }
@@ -125,54 +132,215 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // --- File operations ---
+    // --- Document / tab management ---
+
+    private fun current(): Document = documents[currentIndex]
+
+    private fun nextUntitledName(): String {
+        untitledCounter++
+        return if (untitledCounter == 1) "untitled.txt" else "untitled-$untitledCounter.txt"
+    }
 
     private fun newDocument() {
+        addDocument(Document(uri = null, name = nextUntitledName()), select = true)
+    }
+
+    private fun addDocument(doc: Document, select: Boolean) {
+        saveEditorIntoCurrent()
+        documents.add(doc)
+        if (select || currentIndex < 0) {
+            currentIndex = documents.lastIndex
+            bindCurrentToEditor()
+        }
+        rebuildTabs()
+    }
+
+    private fun selectDocument(index: Int) {
+        if (index == currentIndex || index !in documents.indices) return
+        saveEditorIntoCurrent()
+        currentIndex = index
+        bindCurrentToEditor()
+        rebuildTabs()
+        scrollTabIntoView(index)
+    }
+
+    private fun closeDocument(index: Int) {
+        if (index !in documents.indices) return
+        val doc = documents[index]
+        val doClose = {
+            saveEditorIntoCurrent()
+            documents.removeAt(index)
+            if (documents.isEmpty()) {
+                untitledCounter = 0
+                documents.add(Document(uri = null, name = nextUntitledName()))
+                currentIndex = 0
+            } else {
+                currentIndex = when {
+                    index < currentIndex -> currentIndex - 1
+                    index == currentIndex -> index.coerceAtMost(documents.lastIndex)
+                    else -> currentIndex
+                }
+            }
+            bindCurrentToEditor()
+            rebuildTabs()
+        }
+        if (doc.dirty) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.close_tab_title)
+                .setMessage(getString(R.string.close_tab_message, doc.name))
+                .setPositiveButton(R.string.close) { _, _ -> doClose() }
+                .setNegativeButton(R.string.cancel, null)
+                .show()
+        } else {
+            doClose()
+        }
+    }
+
+    private fun saveEditorIntoCurrent() {
+        val d = documents.getOrNull(currentIndex) ?: return
+        d.text = binding.editor.text?.toString() ?: ""
+        d.selStart = binding.editor.selectionStart.coerceAtLeast(0)
+        d.selEnd = binding.editor.selectionEnd.coerceAtLeast(0)
+    }
+
+    private fun bindCurrentToEditor() {
+        val d = documents.getOrNull(currentIndex) ?: return
         loading = true
-        binding.editor.setText("")
+        binding.editor.setText(d.text)
+        val len = binding.editor.length()
+        val a = d.selStart.coerceIn(0, len)
+        val b = d.selEnd.coerceIn(0, len)
+        binding.editor.setSelection(minOf(a, b), maxOf(a, b))
         loading = false
-        currentUri = null
-        currentName = "untitled.txt"
-        dirty = false
         updateTitle()
         updateStatus()
     }
 
-    private fun loadFile(uri: Uri) {
-        try {
-            val text = contentResolver.openInputStream(uri)?.use { input ->
-                BufferedReader(input.reader(StandardCharsets.UTF_8)).readText()
-            } ?: ""
-            loading = true
-            binding.editor.setText(text)
-            binding.editor.setSelection(0)
-            loading = false
-            currentUri = uri
-            currentName = queryName(uri) ?: "document.txt"
-            dirty = false
-            try {
-                contentResolver.takePersistableUriPermission(
-                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-            } catch (_: SecurityException) {
-            }
-            updateTitle()
-            updateStatus()
-        } catch (e: Exception) {
-            toast(getString(R.string.open_failed))
+    private fun markCurrentDirty() {
+        val d = documents.getOrNull(currentIndex) ?: return
+        if (!d.dirty) {
+            d.dirty = true
+            rebuildTabs()
         }
+        updateTitle()
+    }
+
+    // --- Tab bar rendering ---
+
+    private fun rebuildTabs() {
+        val container = binding.tabContainer
+        container.removeAllViews()
+        binding.tabBar.setBackgroundColor(theme.toolbarBackground)
+        container.setBackgroundColor(theme.toolbarBackground)
+        binding.btnNewTab.setColorFilter(theme.toolbarText, PorterDuff.Mode.SRC_IN)
+
+        val inflater = LayoutInflater.from(this)
+        documents.forEachIndexed { index, doc ->
+            val tab = inflater.inflate(R.layout.tab_document, container, false)
+            val nameView = tab.findViewById<TextView>(R.id.tabName)
+            val closeView = tab.findViewById<ImageView>(R.id.tabClose)
+            val active = index == currentIndex
+
+            nameView.text = (if (doc.dirty) "● " else "") + doc.name
+            if (active) {
+                tab.background = activeTabBackground()
+                nameView.setTextColor(theme.toolbarText)
+                closeView.setColorFilter(theme.toolbarText, PorterDuff.Mode.SRC_IN)
+            } else {
+                tab.setBackgroundColor(theme.toolbarBackground)
+                nameView.setTextColor(theme.gutterText)
+                closeView.setColorFilter(theme.gutterText, PorterDuff.Mode.SRC_IN)
+            }
+
+            tab.setOnClickListener { selectDocument(index) }
+            closeView.setOnClickListener { closeDocument(index) }
+
+            val lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
+            container.addView(tab, lp)
+        }
+    }
+
+    /** Active tab: editor-colored fill with a JetBrains-style accent underline. */
+    private fun activeTabBackground(): LayerDrawable {
+        val accent = ColorDrawable(theme.accent)
+        val fill = ColorDrawable(theme.background)
+        val layers = LayerDrawable(arrayOf(accent, fill))
+        layers.setLayerInset(1, 0, 0, 0, dp(3))
+        return layers
+    }
+
+    private fun scrollTabIntoView(index: Int) {
+        binding.tabScroll.post {
+            val child = binding.tabContainer.getChildAt(index) ?: return@post
+            val target = child.left - (binding.tabScroll.width - child.width) / 2
+            binding.tabScroll.smoothScrollTo(target.coerceAtLeast(0), 0)
+        }
+    }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
+
+    // --- File operations ---
+
+    private fun openFiles(uris: List<Uri>) {
+        saveEditorIntoCurrent()
+
+        // Drop a pristine, empty "untitled" placeholder when opening real files.
+        if (documents.size == 1) {
+            val only = documents[0]
+            if (only.uri == null && !only.dirty && only.text.isBlank()) {
+                documents.clear()
+                currentIndex = -1
+            }
+        }
+
+        var added = 0
+        for (uri in uris) {
+            try {
+                val text = contentResolver.openInputStream(uri)?.use { input ->
+                    BufferedReader(input.reader(StandardCharsets.UTF_8)).readText()
+                } ?: ""
+                val doc = Document(uri = uri, name = queryName(uri) ?: "document.txt", text = text)
+                try {
+                    contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    )
+                } catch (_: SecurityException) {
+                }
+                documents.add(doc)
+                added++
+            } catch (e: Exception) {
+                toast(getString(R.string.open_failed))
+            }
+        }
+
+        if (documents.isEmpty()) {
+            newDocument()
+            return
+        }
+        if (added > 0) currentIndex = documents.lastIndex
+        currentIndex = currentIndex.coerceIn(0, documents.lastIndex)
+        bindCurrentToEditor()
+        rebuildTabs()
+        scrollTabIntoView(currentIndex)
     }
 
     private fun save() {
-        val uri = currentUri
+        val doc = current()
+        val uri = doc.uri
         if (uri == null) {
-            createLauncher.launch(currentName)
+            createLauncher.launch(doc.name)
         } else {
-            saveTo(uri, takePersist = false)
+            saveCurrentTo(uri, takePersist = false)
         }
     }
 
-    private fun saveTo(uri: Uri, takePersist: Boolean) {
+    private fun saveCurrentTo(uri: Uri, takePersist: Boolean) {
+        val doc = current()
         try {
             // "wt" truncates existing content before writing.
             contentResolver.openOutputStream(uri, "wt")?.use { out ->
@@ -182,15 +350,17 @@ class MainActivity : AppCompatActivity() {
             if (takePersist) {
                 try {
                     contentResolver.takePersistableUriPermission(
-                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                     )
                 } catch (_: SecurityException) {
                 }
             }
-            currentUri = uri
-            currentName = queryName(uri) ?: currentName
-            dirty = false
+            doc.uri = uri
+            doc.name = queryName(uri) ?: doc.name
+            doc.dirty = false
             updateTitle()
+            rebuildTabs()
             toast(getString(R.string.saved))
         } catch (e: Exception) {
             toast(getString(R.string.save_failed))
@@ -208,21 +378,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun confirmDiscard(action: () -> Unit) {
-        if (!dirty) {
-            action()
-            return
-        }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.unsaved_title)
-            .setMessage(R.string.unsaved_message)
-            .setPositiveButton(R.string.discard) { _, _ -> action() }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
-    }
+    private fun anyDirty(): Boolean = documents.any { it.dirty }
 
     override fun onBackPressed() {
-        confirmDiscard { super.onBackPressed() }
+        if (anyDirty()) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.unsaved_title)
+                .setMessage(R.string.unsaved_message)
+                .setPositiveButton(R.string.discard) { _, _ -> super.onBackPressed() }
+                .setNegativeButton(R.string.cancel, null)
+                .show()
+        } else {
+            super.onBackPressed()
+        }
     }
 
     // --- Theming ---
@@ -249,19 +417,21 @@ class MainActivity : AppCompatActivity() {
 
         binding.toolbar.setBackgroundColor(t.toolbarBackground)
         binding.toolbar.setTitleTextColor(t.toolbarText)
+        binding.toolbar.setSubtitleTextColor(t.gutterText)
         binding.toolbar.overflowIcon?.setColorFilter(t.toolbarText, PorterDuff.Mode.SRC_IN)
         binding.toolbar.navigationIcon?.setColorFilter(t.toolbarText, PorterDuff.Mode.SRC_IN)
 
         binding.statusBar.setBackgroundColor(t.statusBar)
         binding.statusBar.setTextColor(t.gutterText)
 
-        // System bars.
         window.statusBarColor = t.statusBar
         window.navigationBarColor = t.toolbarBackground
         WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = !t.isDark
             isAppearanceLightNavigationBars = !t.isDark
         }
+
+        rebuildTabs()
         invalidateOptionsMenu()
     }
 
@@ -269,7 +439,6 @@ class MainActivity : AppCompatActivity() {
         wordWrap = !wordWrap
         prefs.edit { putBoolean("wrap", wordWrap) }
         binding.editor.setHorizontallyScrolling(!wordWrap)
-        // Force re-layout of the editor.
         val text = binding.editor.text
         loading = true
         binding.editor.text = text
@@ -277,13 +446,13 @@ class MainActivity : AppCompatActivity() {
         invalidateOptionsMenu()
     }
 
-    // --- Status bar ---
+    // --- Title / status ---
 
     private fun updateTitle() {
-        val mark = if (dirty) "● " else ""
+        val doc = documents.getOrNull(currentIndex)
+        val mark = if (doc?.dirty == true) "● " else ""
         supportActionBar?.title = "EText"
-        supportActionBar?.subtitle = "$mark$currentName"
-        binding.toolbar.setSubtitleTextColor(theme.gutterText)
+        supportActionBar?.subtitle = mark + (doc?.name ?: "")
     }
 
     private fun updateStatus() {
@@ -299,7 +468,9 @@ class MainActivity : AppCompatActivity() {
         }
         val lines = if (text.isEmpty()) 1 else text.count { it == '\n' } + 1
         val chars = text.length
-        binding.statusBar.text = "Ln $line, Col $col    $lines lines    $chars chars    ${theme.displayName}"
+        val tabInfo = if (documents.isNotEmpty()) "[${currentIndex + 1}/${documents.size}]  " else ""
+        binding.statusBar.text =
+            "${tabInfo}Ln $line, Col $col    $lines lines    $chars chars    ${theme.displayName}"
     }
 
     private fun showAbout() {
@@ -307,7 +478,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle("EText")
             .setMessage(
                 "EText — a simple, contrast-first text editor for .txt, .md and .conf files.\n\n" +
-                    "JetBrains-inspired UI with seven editor themes.\n\nVersion 1.0"
+                    "JetBrains-inspired UI with tabbed multi-file editing and seven editor themes.\n\nVersion 1.0"
             )
             .setPositiveButton(android.R.string.ok, null)
             .show()
