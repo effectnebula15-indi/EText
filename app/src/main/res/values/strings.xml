@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">EText</string>
+
+    <string name="menu_new">New</string>
+    <string name="menu_open">Open</string>
+    <string name="menu_save">Save</string>
+    <string name="menu_save_as">Save As…</string>
+    <string name="menu_theme">Theme</string>
+    <string name="menu_wrap">Word wrap</string>
+    <string name="menu_about">About</string>
+
+    <string name="untitled">untitled.txt</string>
+    <string name="saved">Saved</string>
+    <string name="save_failed">Save failed</string>
+    <string name="open_failed">Could not open file</string>
+    <string name="unsaved_title">Unsaved changes</string>
+    <string name="unsaved_message">Discard the current changes?</string>
+    <string name="discard">Discard</string>
+    <string name="cancel">Cancel</string>
+    <string name="pick_theme">Choose theme</string>
+</resources>

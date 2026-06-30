@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        app:titleTextAppearance="@style/ETextToolbarTitle"
+        app:titleCentered="false" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <com.etext.editor.CodeEditText
+            android:id="@+id/editor"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@android:color/transparent"
+            android:fontFamily="monospace"
+            android:gravity="top|start"
+            android:hint="@string/app_name"
+            android:inputType="textMultiLine|textNoSuggestions"
+            android:scrollHorizontally="true"
+            android:textSize="15sp"
+            android:importantForAutofill="no"
+            android:textIsSelectable="true" />
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/statusBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="5dp"
+        android:textSize="11sp"
+        android:fontFamily="monospace"
+        android:singleLine="true"
+        android:text="" />
+
+</LinearLayout>
