@@ -1,0 +1,2 @@
+# EText
+Effect Text Editor
