@@ -19,4 +19,8 @@
     <string name="discard">Discard</string>
     <string name="cancel">Cancel</string>
     <string name="pick_theme">Choose theme</string>
+    <string name="close_tab">Close tab</string>
+    <string name="close_tab_title">Close tab</string>
+    <string name="close_tab_message">\"%1$s\" has unsaved changes. Close it anyway?</string>
+    <string name="close">Close</string>
 </resources>
